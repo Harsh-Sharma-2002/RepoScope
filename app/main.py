@@ -3,6 +3,8 @@ from fastapi import FastAPI
 import requests
 from dotenv import load_dotenv
 import os
+import base64
+import requests
 
 load_dotenv()
 
@@ -39,3 +41,32 @@ async def test_files():
     }
     response = requests.get(url, headers=headers)
     return response.json()
+
+
+
+@app.get("/fetch_file_content")
+async def fetch_file_content(contents_url: str):
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    response = requests.get(contents_url, headers=headers)
+    
+    if response.status_code != 200:
+        return {"error": f"Failed: {response.text}"}
+    
+    data = response.json()  # THIS MUST BE A DICT
+    
+    encoded = data.get("content")
+    if not encoded:
+        return {"error": "No 'content' key — you passed wrong URL"}
+    
+    decoded = base64.b64decode(encoded).decode("utf-8", errors="replace")
+    
+    return {
+        "file_path": data.get("path"),
+        "file_content": decoded
+    }
+
+    
