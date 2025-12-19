@@ -4,6 +4,9 @@ import requests, os
 from ..utils import fetch_file_content
 
 
+#################################################################################################################
+#################################################################################################################
+
 def fetch_pr_files(owner: str, repo: str, pr_number: int):
     """
     Fetches list of changed files in a PR, including:
@@ -43,6 +46,8 @@ def fetch_pr_files(owner: str, repo: str, pr_number: int):
 
     return PRFilesResponse(files=cleaned_files)
 
+#################################################################################################################
+#################################################################################################################
 
 def fetch_all_file_contents(owner: str, repo: str, pr_number: int):
     """

@@ -9,6 +9,10 @@ import os
 
 
 
+#################################################################################################################
+#################################################################################################################
+
+
 def fetch_repo_tree(owner: str, repo: str, branch: str = "main"):
 
     """
@@ -121,32 +125,85 @@ def index_repo(owner: str, repo: str, branch: str = "main"):
 
 def index_repo_clone(owner: str, repo: str, branch: str = "main"):
     """
-    Indexes the repository by cloning it and reading files directly.
-    Returns a list of RepoIndexItem with path and content.
-
-    Note: Requires 'git' to be installed and accessible in the environment.
+    Index the repository by cloning it locally and reading files directly.
+    This avoids GitHub API rate limits and works even for large repos.
     """
-    import tempfile
-    import subprocess
-    import shutil
 
-    # Create a temporary directory to clone the repo
     temp_dir = tempfile.mkdtemp()
     repo_url = f"https://github.com/{owner}/{repo}.git"
+
     try:
-        # Clone the repository
         subprocess.run(
-            ["git", "clone", "--branch", branch, "--single-branch", repo_url, temp_dir],
+            [
+                "git", "clone",
+                "--branch", branch,
+                "--single-branch",
+                "--depth", "1",
+                repo_url,
+                temp_dir
+            ],
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True
         )
-
     except subprocess.CalledProcessError as e:
         shutil.rmtree(temp_dir)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Git clone failed: {e.stderr}"
-        )
+        raise HTTPException(500, f"Git clone failed: {e.stderr}")
+
+    index_items = []
+
+    SKIP_DIRS = {
+        ".git", "node_modules", "venv", "env", "__pycache__", 
+        "dist", "build", "target", ".idea", ".vscode"
+    }
+
+    BINARY_EXTS = {
+        ".png", ".jpg", ".jpeg", ".gif", ".ico",
+        ".pdf", ".zip", ".tar", ".gz", ".exe", ".dll",
+        ".so", ".dylib", ".7z", ".mp4", ".mp3"
+    }
+
+    MAX_FILE_SIZE = 2 * 1024 * 1024  # 2MB
+
+    for root, dirs, files in os.walk(temp_dir):
+
+        # Skip unwanted directories
+        if any(skip in root.split(os.sep) for skip in SKIP_DIRS):
+            continue
+
+        for filename in files:
+
+            # Skip binary extensions
+            if any(filename.lower().endswith(ext) for ext in BINARY_EXTS):
+                continue
+
+            file_path = os.path.join(root, filename)
+
+            # Skip large files (>2MB)
+            if os.path.getsize(file_path) > MAX_FILE_SIZE:
+                continue
+
+            rel_path = os.path.relpath(file_path, temp_dir)
+
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except Exception:
+                continue
+
+            index_items.append(
+                RepoIndexItem(
+                    path=rel_path,
+                    content=content
+                )
+            )
+
+    shutil.rmtree(temp_dir)
+    return RepoIndexResponse(items=index_items)
+
+
+#################################################################################################################
+#################################################################################################################
+
 
