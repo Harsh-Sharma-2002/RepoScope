@@ -44,3 +44,5 @@ def embed_batch(req: BatchEmbedRequest):
         )
 
     return BatchEmbedResponse(embeddings=responses)
+
+# #############################################################################################################################
