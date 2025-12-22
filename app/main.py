@@ -15,7 +15,7 @@ app.include_router(pr_routes.router, prefix="/pr")
 app.include_router(repo_index_routes.router, prefix="/repo_index")
 app.include_router(chunk_routes.router, prefix="/chunk")
 app.include_router(embedding_routes.router,prefix="/embed")
-app.include_router(vector_db_routes.router,prefix="vector")
+app.include_router(vector_db_routes.router,prefix="/vector")
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
