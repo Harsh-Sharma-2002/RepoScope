@@ -10,10 +10,10 @@ router = APIRouter(tags=["Chunk Routes"])
 ##############################################################################################
 
 @router.get("/chunk_repo",response_model= RepoChunksResponse)
-def chunk_repo_route(owner: str,repo : str, branch: str = "main" ,chunk_size: int = 800,overlap: int = 200) -> RepoChunksResponse :
+def chunk_repo_route(owner: str,repo : str, branch: str = "main") -> RepoChunksResponse :
     
     repo_index = index_repo_clone(owner, repo, branch)
-    return chunk_repo_contents(repo_index ,chunk_size,overlap)
+    return chunk_repo_contents(repo_index)
 
 ##############################################################################################
 ##############################################################################################

@@ -4,7 +4,7 @@ from ..schema import *
 ##################################################################################################################
 ##################################################################################################################
 
-def chunk_text(text: str,target_size: int = 850,min_size: int = 700,max_size: int = 1000):
+def chunk_text(text: str):
     """
     Semantic, line-based chunking for code and text.
 
@@ -15,13 +15,14 @@ def chunk_text(text: str,target_size: int = 850,min_size: int = 700,max_size: in
     - Language-agnostic (indent + braces heuristics)
 
     Chunk sizes are chosen based on downstream LLM context constraints rather than arbitrary limits.
-
     Chunks are structurally aware and variable-length, preferring logical boundaries (functions, classes, blocks) while enforcing a hard maximum size to keep token usage predictable.
-
     The max chunk size (~1000 characters) is derived from worst-case prompt assembly: the system retrieves the top-K relevant chunks and performs limited local context expansion (neighboring chunks). With this cap, even in the worst case, the expanded context fits safely within an ~8k token window.
-
     This approach balances semantic coherence, retrieval quality, and prompt reliability, while avoiding brittle assumptions about model context limits.
     """
+
+    target_size = 850
+    min_size = 700
+    max_size = 1000
 
     # Normalize newlines
     text = text.replace("\r\n", "\n").replace("\r", "\n")
@@ -35,25 +36,28 @@ def chunk_text(text: str,target_size: int = 850,min_size: int = 700,max_size: in
     indent_stack = [0]   # for indentation-based languages
     brace_depth = 0      # for brace-based languages
 
-    def is_strong_boundary(line: str) -> bool:
+    def is_strong_boundary(line: str, prev_brace_depth: int) -> bool:
         stripped = line.strip()
 
-        # End of Python function / class (dedent to top-level)
-        if stripped and not line.startswith((" ", "\t")):
+        # Python: end of function or class definition
+        if stripped.startswith(("def ", "class ")):
             return True
 
-        # End of JS/C-like block at top-level
-        if stripped == "}" and brace_depth == 0:
+        # Optional: explicit main guard
+        if stripped.startswith("if __name__"):
+            return True
+
+        # JS / C-like: closing brace of top-level block
+        if stripped == "}" and prev_brace_depth == 1:
             return True
 
         return False
-
 
     for line in lines:
         buffer.append(line)
         buffer_len += len(line) + 1  # +1 for newline
 
-        # Update indentation stack (Python-style)
+        # Track indentation (Python-style)
         current_indent = len(line) - len(line.lstrip())
         if current_indent > indent_stack[-1]:
             indent_stack.append(current_indent)
@@ -61,14 +65,15 @@ def chunk_text(text: str,target_size: int = 850,min_size: int = 700,max_size: in
             while indent_stack and indent_stack[-1] > current_indent:
                 indent_stack.pop()
 
-        # Update brace depth (JS / C-like)
+        # ---- FIX: brace depth off-by-one ----
+        prev_brace_depth = brace_depth
         brace_depth += line.count("{")
         brace_depth -= line.count("}")
 
         # Decide when to flush
         if (
             buffer_len >= min_size
-            and is_strong_boundary(line)
+            and is_strong_boundary(line, prev_brace_depth)
             and buffer_len <= max_size
         ) or buffer_len >= max_size:
 
@@ -90,30 +95,51 @@ def chunk_text(text: str,target_size: int = 850,min_size: int = 700,max_size: in
 
 
 
+
 ##################################################################################################################
 ##################################################################################################################
 
-def chunk_repo_contents(repo_index: RepoIndexResponse,chunk_size: int = 800,overlap: int = 200) -> RepoChunksResponse:
-    
+def chunk_repo_contents(repo_index: RepoIndexResponse) -> RepoChunksResponse:
+    """
+    Chunks repository contents into structurally coherent, LLM-safe code segments.
+
+    Only source code files are indexed. Non-code artifacts are excluded to
+    preserve retrieval precision and avoid polluting the vector index with
+    low-signal data.
+    """
+
     repo_chunks = []
     global_chunk_id = 0
 
-    for item in repo_index.items:
+    CODE_EXTENSIONS = {
+        ".py", ".js", ".ts", ".jsx", ".tsx",
+        ".java", ".go", ".rs", ".cpp", ".c",
+        ".h", ".hpp", ".cs"
+    }
 
+    for item in repo_index.items:
         file_path = item.path
         content = item.content
 
-        # Skip empty files
         if not content.strip():
             continue
 
-        # Skip extremely large files
+        filename = file_path.split("/")[-1]
+        extension = "." + filename.split(".")[-1] if "." in filename else ""
+
+        # Allowlist-based filtering
+        if extension not in CODE_EXTENSIONS:
+            continue
+
         if len(content) > 200_000:
             continue
 
-        chunks = chunk_text(content, chunk_size, overlap)
+        chunks = chunk_text(content)
 
         for local_id, chunk_content in chunks:
+            if len(chunk_content) < 200:
+                continue
+
             repo_chunks.append(
                 RepoChunk(
                     file_path=file_path,
@@ -124,6 +150,8 @@ def chunk_repo_contents(repo_index: RepoIndexResponse,chunk_size: int = 800,over
             global_chunk_id += 1
 
     return RepoChunksResponse(chunks=repo_chunks)
+
+
 
 
 ##################################################################################################################
