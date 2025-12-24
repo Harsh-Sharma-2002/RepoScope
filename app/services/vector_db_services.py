@@ -1,10 +1,23 @@
 from ..schema import  RepoChunksResponse
+import chromadb
+from chromadb.config import Settings
+import os
+
+
+CHROMA_PERSISTANT_DIR = os.getenv("CHROMA_PERSISTANT_DIR","./.chroma_db")
 
 #################################################################################################################
 #################################################################################################################
 
 def get_client():
-    pass
+    """
+    Create and return a Chroma client.
+
+    The client is configured to use persistent storage so that
+    embeddings survive application restarts.
+    """
+    client = chromadb.Client(Settings(persist_directory = CHROMA_PERSISTANT_DIR))
+    return client
 
 #################################################################################################################
 #################################################################################################################
