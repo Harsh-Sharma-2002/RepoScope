@@ -102,3 +102,29 @@ class BatchEmbedResponse(BaseModel):
     embeddings: List[EmbedResponse]
 
 ####################################################################################################
+
+# Vector DB schemas
+
+class VectorRepoInitRequest(BaseModel):
+    owner: str
+    repo: str
+    branch: str = "main"
+    embedding_provider: str
+
+
+class VectorSearchRequest(BaseModel):
+    repo_name: str
+    query: str
+    top_k: int = 5
+
+
+class VectorSearchResult(BaseModel):
+    chunk_id: int
+    file_path: str
+    local_index: int
+    score: float
+    content: str
+
+
+class VectorSearchResponse(BaseModel):
+    results: List[VectorSearchResult]
