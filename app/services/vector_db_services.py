@@ -9,15 +9,27 @@ CHROMA_PERSISTANT_DIR = os.getenv("CHROMA_PERSISTANT_DIR","./.chroma_db")
 #################################################################################################################
 #################################################################################################################
 
-def get_client():
+def get_client() -> chromadb.Client:
     """
-    Create and return a Chroma client.
+    Return a singleton Chroma client configured with persistent storage.
 
-    The client is configured to use persistent storage so that
-    embeddings survive application restarts.
+    Phase-1 guarantees:
+    - Single client instance per process
+    - Stable persistence directory
+    - No hidden side effects
     """
-    client = chromadb.Client(Settings(persist_directory = CHROMA_PERSISTANT_DIR))
-    return client
+
+    global _client
+
+    if _client is None:
+        _client = chromadb.Client(
+            Settings(
+                persist_directory=CHROMA_PERSISTANT_DIR
+            )
+        )
+
+    return _client
+
 
 #################################################################################################################
 #################################################################################################################
