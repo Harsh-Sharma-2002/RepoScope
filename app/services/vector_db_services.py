@@ -86,80 +86,9 @@ def get_collection(repo_name: str, embedding_dim: Optional[int] = None):
 #################################################################################################################
 #################################################################################################################
 
-import numpy as np
-from ..schema import RepoChunksResponse
-
-
-def _normalize_vector(vec: list[float]) -> list[float]:
-    """
-    L2-normalize a vector. Raises if vector is invalid.
-    """
-    arr = np.asarray(vec, dtype=np.float32)
-    norm = np.linalg.norm(arr)
-
-    if norm == 0 or np.isnan(norm):
-        raise ValueError("Invalid embedding vector (zero or NaN norm)")
-
-    return (arr / norm).tolist()
-
-
-def store_repo_embedding(
-    repo_name: str,
-    chunks: RepoChunksResponse,
-    embedding_dim: int
-):
-    """
-    Store chunk embeddings for a repository in the vector database.
-
-    Responsibilities:
-    - Assign deterministic vector IDs
-    - Normalize embeddings
-    - Attach retrieval-critical metadata
-    - Persist vectors into the repo-scoped collection
-
-    This function assumes embeddings are already computed
-    and attached to each RepoChunk.
-    """
-
-    client = get_client()
-    collection = get_collection(repo_name, embedding_dim=embedding_dim)
-
-    ids = []
-    embeddings = []
-    metadatas = []
-    documents = []
-
-    for chunk in chunks.chunks:
-        if not hasattr(chunk, "embedding"):
-            raise ValueError(
-                f"Chunk {chunk.chunk_id} is missing embedding."
-            )
-
-        vector = _normalize_vector(chunk.embedding)
-
-        vector_id = f"{repo_name}::{chunk.chunk_id}"
-
-        ids.append(vector_id)
-        embeddings.append(vector)
-        documents.append(chunk.content)
-
-        metadatas.append({
-            "repo_name": repo_name,
-            "chunk_id": chunk.chunk_id,
-            "file_path": chunk.file_path,
-            "local_index": chunk.local_index
-        })
-
-    collection.add(
-        ids=ids,
-        embeddings=embeddings,
-        documents=documents,
-        metadatas=metadatas
-    )
-
-    # Persist to disk (Phase-1 explicit persistence)
-    client.persist()
-
+def store_repo_embedding(repo_name: str, chunks: RepoChunksResponse):
+    
+    
 
 #################################################################################################################
 #################################################################################################################
