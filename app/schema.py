@@ -16,7 +16,7 @@ class FileChange(BaseModel):
 # Response for /fetch_pr_files
 
 class PRFilesResponse(BaseModel):
-    files: List[FileChange]
+    files: list[FileChange]
 
 
 ####################################################################################################
@@ -39,7 +39,7 @@ class ExpandedFile(BaseModel):
 # Response for /fetch_all_file_contents
 
 class AllFilesContentResponse(BaseModel):
-    files: List[ExpandedFile]
+    files: list[ExpandedFile]
 
 ####################################################################################################
 # Model for a single item in the repo tree
@@ -53,7 +53,7 @@ class RepoTreeItem(BaseModel):
 
 # Response for /fetch_repo_tree
 class RepoTreeResponse(BaseModel):
-    tree: List[RepoTreeItem]
+    tree: list[RepoTreeItem]
     truncated: Optional[bool] = None
 
 
@@ -66,7 +66,7 @@ class RepoIndexItem(BaseModel):
 
 # Response for /index_repo
 class RepoIndexResponse(BaseModel):
-    items: List[RepoIndexItem]
+    items: list[RepoIndexItem]
 
 ####################################################################################################
 
@@ -79,7 +79,7 @@ class RepoChunk(BaseModel):
 
 # Response for repo chunks
 class RepoChunksResponse(BaseModel):
-    chunks: List[RepoChunk]
+    chunks: list[RepoChunk]
 
 
 ####################################################################################################
@@ -127,4 +127,4 @@ class VectorSearchResult(BaseModel):
 
 
 class VectorSearchResponse(BaseModel):
-    results: List[VectorSearchResult]
+    results: list[VectorSearchResult]

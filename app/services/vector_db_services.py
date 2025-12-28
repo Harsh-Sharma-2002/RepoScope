@@ -3,7 +3,8 @@ import chromadb
 from chromadb.config import Settings
 import os
 from typing import Optional
-
+import numpy as np
+from typing import List
 
 CHROMA_PERSISTANT_DIR = os.getenv("CHROMA_PERSISTANT_DIR","./.chroma_db")
 
@@ -81,13 +82,46 @@ def get_collection(repo_name: str, embedding_dim: Optional[int] = None):
         
     return collection
 
-    
+
 
 #################################################################################################################
 #################################################################################################################
 
-def store_repo_embedding(repo_name: str, chunks: RepoChunksResponse):
+def _normalize_vector(vec: list(float)) -> list(float):
+    """
+    L2 normalization a vector . Raise issue if vector is invalid
+    """
+    arr = np.asarray(vec,dtype=np.float32)
+    arr_norm = np.linalg.norm(arr)
+
+    if arr_norm == 0 or np.isnan(arr_norm):
+        raise ValueError("Invalid embedding vector (Zerop or NaN norm)")
     
+    return (arr / arr_norm).tolist()
+
+#################################################################################################################
+
+def store_repo_embedding(repo_name: str, chunks: RepoChunksResponse, embedding_dim: int, embeddi):
+    """
+    Store chunk embeddings for a repository in the vector database.
+
+    Responsibilities:
+    - Assign deterministic vector IDs
+    - Normalize embeddings
+    - Attach retrieval-critical metadata
+    - Persist vectors into the repo-scoped collection
+
+    This function assumes embeddings are already computed
+    and attached to each RepoChunk.
+    """
+
+    client = get_client()
+    collection = get_collection(repo_name,embedding_dim)
+    ids = []
+    embeddings = []
+    metadatas = []
+    documents = []
+
     
 
 #################################################################################################################
