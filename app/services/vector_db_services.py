@@ -5,6 +5,7 @@ import os
 from typing import Optional
 import numpy as np
 from typing import List
+from .embedding_services import embed_text
 
 CHROMA_PERSISTANT_DIR = os.getenv("CHROMA_PERSISTANT_DIR","./.chroma_db")
 
@@ -87,7 +88,7 @@ def get_collection(repo_name: str, embedding_dim: Optional[int] = None):
 #################################################################################################################
 #################################################################################################################
 
-def _normalize_vector(vec: list(float)) -> list(float):
+def _normalize_vector(vec: list[float]) -> list[float]:
     """
     L2 normalization a vector . Raise issue if vector is invalid
     """
@@ -101,7 +102,7 @@ def _normalize_vector(vec: list(float)) -> list(float):
 
 #################################################################################################################
 
-def store_repo_embedding(repo_name: str, chunks: RepoChunksResponse, embedding_dim: int, embeddi):
+def store_repo_embedding(repo_name: str, chunks: RepoChunksResponse, embedding_dim: int, embedding_provider: str):
     """
     Store chunk embeddings for a repository in the vector database.
 
@@ -117,10 +118,34 @@ def store_repo_embedding(repo_name: str, chunks: RepoChunksResponse, embedding_d
 
     client = get_client()
     collection = get_collection(repo_name,embedding_dim)
-    ids = []
-    embeddings = []
-    metadatas = []
-    documents = []
+    ids: list[str] = []
+    embeddings: list[list[float]] = []
+    metadatas: list[dict] = []
+
+    for chunk in chunks.chunks:
+        emb_resp = embed_text(chunk.content, provider= embedding_provider)
+        vector = _normalize_vector(emb_resp["embedding"])
+
+        vector_id = f"{repo_name}::{chunk.chunk_id}"
+        embeddings.append(vector)
+
+        # 3. Metadata required for retrieval + context expansion
+        metadatas.append({
+            "repo_name": repo_name,
+            "chunk_id": chunk.chunk_id,
+            "file_path": chunk.file_path,
+            "local_index": chunk.local_index
+        })
+
+    # 4. Persist into vector DB
+    collection.add(
+        ids=ids,
+        embeddings=embeddings,
+        metadatas=metadatas
+    )
+
+    client.persist()
+
 
     
 

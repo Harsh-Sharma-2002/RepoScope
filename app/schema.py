@@ -106,6 +106,7 @@ class BatchEmbedResponse(BaseModel):
 # Vector DB schemas
 
 class VectorRepoInitRequest(BaseModel):
+    # Request to index a repo into the vector database, this builds a vector index for the repo  at its current head done once in begin
     owner: str
     repo: str
     branch: str = "main"
@@ -113,12 +114,17 @@ class VectorRepoInitRequest(BaseModel):
 
 
 class VectorSearchRequest(BaseModel):
+    # A request to search a repository vector index for relevant external context
     repo_name: str
     query: str
     top_k: int = 5
+    embedding_provider: str
+    window_size: int = 2
+    current_file_path: str
 
 
 class VectorSearchResult(BaseModel):
+    # A single vector similar to the query file
     chunk_id: int
     file_path: str
     local_index: int
@@ -127,4 +133,9 @@ class VectorSearchResult(BaseModel):
 
 
 class VectorSearchResponse(BaseModel):
+    # Response Containing top_k similar repsonses to the given query
     results: list[VectorSearchResult]
+
+
+
+    
