@@ -366,6 +366,51 @@ def search_repo(
 
     return VectorSearchResponse(results=results)
 
+#################################################################################################################
+#################################################################################################################
+
+def reindex_repo(
+    repo_name: str,
+    chunks: RepoChunksResponse,
+    embedding_dim: int,
+    embedding_provider: str,
+):
+    """
+    Reindex the repository at the current working HEAD.
+
+    Phase-1 behavior:
+    - Deletes the existing vector collection for the repo (if present)
+    - Creates a fresh collection
+    - Rebuilds the vector index from scratch
+
+    This enforces the invariant:
+    - Vector DB always represents the current repo state
+    """
+
+    client = get_client()
+    collection_name = _normalize_collection_name(repo_name)
+
+    # Delete existing collection if it exists
+    try:
+        client.delete_collection(collection_name)
+    except Exception:
+        # Collection may not exist — this is fine in Phase-1
+        pass
+
+    # Create fresh collection with correct embedding_dim
+    get_collection(
+        repo_name=repo_name,
+        embedding_dim=embedding_dim
+    )
+
+    # Store embeddings into the new collection
+    store_repo_embedding(
+        repo_name=repo_name,
+        chunks=chunks,
+        embedding_dim=embedding_dim,
+        embedding_provider=embedding_provider,
+    )
+
 
 #################################################################################################################
 #################################################################################################################
