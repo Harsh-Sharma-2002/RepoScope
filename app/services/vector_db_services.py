@@ -4,7 +4,7 @@ from chromadb.config import Settings
 import os
 from typing import Optional
 import numpy as np
-from typing import List
+from typing import Dict
 from .embedding_services import embed_text
 
 CHROMA_PERSISTANT_DIR = os.getenv("CHROMA_PERSISTANT_DIR","./.chroma_db")
@@ -152,8 +152,17 @@ def store_repo_embedding(repo_name: str, chunks: RepoChunksResponse, embedding_d
 #################################################################################################################
 #################################################################################################################
 
-def search_repo(repo_name: str, chunk_id: int, content: str, top_k : int = 5):
-    pass
+def _distance_to_score(dist : float) -> float:
+    return 1 - dist 
+
+#################################################################################################################
+
+#################################################################################################################
+def search_repo(repo_name: str, query: str, current_file: str, chunks: RepoChunksResponse, embedding_provider: str, top_k: int = 5, window_size: int = 2):
+    
+    query_embedding = embed_text(query)
+
+    
 
 #################################################################################################################
 #################################################################################################################
