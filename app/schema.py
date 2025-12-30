@@ -137,5 +137,13 @@ class VectorSearchResponse(BaseModel):
     results: list[VectorSearchResult]
 
 
+class ContextChunk(BaseModel):
+    # A single canonical code chunk included in the expanded context window.
+    chunk_id: int
+    file_path: str
+    local_index: int
+    content: str
+
+
 
     
