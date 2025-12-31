@@ -63,29 +63,32 @@ def get_collection(repo_name: str, embedding_dim: Optional[int] = None):
     - Deterministic, safe collection naming
     - Optional validation of embedding dimensionality
     """
-
+    
     client = get_client()
     collection_name = _normalize_collection_name(repo_name=repo_name)
 
-    collection = client.get_or_create_collection(
-    name=collection_name,
-    metadata={
-    "repo_name": repo_name,
-    "embedding_dim": embedding_dim
+    # Build metadata safely (NO None values)
+    metadata = {
+        "repo_name": repo_name,
     }
 
-)
-
-    # if embedding_dim is present, validate against the value in metadata
-
     if embedding_dim is not None:
-        stored_dim = collection.metadata.get("embedding_dim") 
+        metadata["embedding_dim"] = embedding_dim
+
+    collection = client.get_or_create_collection(
+        name=collection_name,
+        metadata=metadata,
+    )
+
+    # Validate embedding dimension if provided
+    if embedding_dim is not None:
+        stored_dim = collection.metadata.get("embedding_dim")
         if stored_dim is not None and stored_dim != embedding_dim:
             raise ValueError(
                 f"Embedding dimension mismatch for repo '{repo_name}'. "
                 f"Expected {stored_dim}, got {embedding_dim}."
             )
-        
+
     return collection
 
 
@@ -162,7 +165,7 @@ def store_repo_embedding(repo_name: str, chunks: RepoChunksResponse, embedding_d
         metadatas=metadatas
     )
 
-    client.persist()
+    
 
 
     
