@@ -9,6 +9,7 @@ import os
 
 
 
+
 #################################################################################################################
 #################################################################################################################
 
@@ -125,12 +126,20 @@ def index_repo(owner: str, repo: str, branch: str = "main"):
 
 def index_repo_clone(owner: str, repo: str, branch: str = "main"):
     """
-    Index the repository by cloning it locally and reading files directly.
-    This avoids GitHub API rate limits and works even for large repos.
+    Clone a GitHub repository at the given branch and return indexable files.
+
+    Phase-1 guarantees:
+    - Non-interactive git execution
+    - Deterministic failure on auth issues
+    - Temporary clone cleaned up on exit
     """
 
     temp_dir = tempfile.mkdtemp()
     repo_url = f"https://github.com/{owner}/{repo}.git"
+
+    # 🔑 Critical: disable interactive git prompts
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
 
     try:
         subprocess.run(
@@ -145,16 +154,24 @@ def index_repo_clone(owner: str, repo: str, branch: str = "main"):
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
+            env=env,
         )
     except subprocess.CalledProcessError as e:
-        shutil.rmtree(temp_dir)
-        raise HTTPException(500, f"Git clone failed: {e.stderr}")
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Git clone failed. Ensure GitHub credentials are configured "
+                "(HTTPS + PAT or existing VS Code auth).\n\n"
+                f"{e.stderr.strip()}"
+            )
+        )
 
     index_items = []
 
     SKIP_DIRS = {
-        ".git", "node_modules", "venv", "env", "__pycache__", 
+        ".git", "node_modules", "venv", "env", "__pycache__",
         "dist", "build", "target", ".idea", ".vscode"
     }
 
@@ -166,40 +183,45 @@ def index_repo_clone(owner: str, repo: str, branch: str = "main"):
 
     MAX_FILE_SIZE = 2 * 1024 * 1024  # 2MB
 
-    for root, dirs, files in os.walk(temp_dir):
+    try:
+        for root, dirs, files in os.walk(temp_dir):
+            # Prune unwanted directories in-place (faster + safer)
+            dirs[:] = [
+                d for d in dirs
+                if d not in SKIP_DIRS
+            ]
 
-        # Skip unwanted directories
-        if any(skip in root.split(os.sep) for skip in SKIP_DIRS):
-            continue
+            for filename in files:
+                if any(filename.lower().endswith(ext) for ext in BINARY_EXTS):
+                    continue
 
-        for filename in files:
+                file_path = os.path.join(root, filename)
 
-            # Skip binary extensions
-            if any(filename.lower().endswith(ext) for ext in BINARY_EXTS):
-                continue
+                try:
+                    if os.path.getsize(file_path) > MAX_FILE_SIZE:
+                        continue
+                except OSError:
+                    continue
 
-            file_path = os.path.join(root, filename)
+                rel_path = os.path.relpath(file_path, temp_dir)
 
-            # Skip large files (>2MB)
-            if os.path.getsize(file_path) > MAX_FILE_SIZE:
-                continue
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                except Exception:
+                    continue
 
-            rel_path = os.path.relpath(file_path, temp_dir)
-
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-            except Exception:
-                continue
-
-            index_items.append(
-                RepoIndexItem(
-                    path=rel_path,
-                    content=content
+                index_items.append(
+                    RepoIndexItem(
+                        path=rel_path,
+                        content=content
+                    )
                 )
-            )
 
-    shutil.rmtree(temp_dir)
+    finally:
+        # Always clean up temp dir
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
     return RepoIndexResponse(items=index_items)
 
 
