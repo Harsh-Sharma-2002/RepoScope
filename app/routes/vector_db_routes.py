@@ -20,7 +20,13 @@ def reindex_vector_repo(req: VectorRepoInitRequest):
     - Translate errors to HTTP
     """
     try:
-        return vector_index_service(req)
+        return vector_index_service(
+        owner=req.owner,
+        repo=req.repo,
+        branch=req.branch,
+        embedding_provider=req.embedding_provider,
+        )
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -37,7 +43,13 @@ def search_vector_repo(req: VectorSearchRequest):
     Retrieve external repository context.
     """
     try:
-        return vector_search_service(req)
+        return vector_search_service(
+        repo_name=req.repo_name,
+        query=req.query,
+        embedding_provider=req.embedding_provider,
+        top_k=req.top_k,
+    )
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -47,9 +59,7 @@ def search_vector_repo(req: VectorSearchRequest):
 ##############################################################################################
 
 @router.get("/status")
-def vector_status(repo_name: str):
-    """
-    Inspect vector DB state.
-    """
-    return get_vector_status(repo_name)
+def vector_status(owner: str, repo: str):
+    return get_vector_status(owner, repo)
+
 
