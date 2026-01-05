@@ -119,7 +119,7 @@ def delete_collection_if_exists(repo_id: str):
 #################################################################################################################
 #################################################################################################################
 
-CHROMA_PERSISTENT_DIR = os.getenv("CHROMA_PERSISTENT_DIR", "./.chroma_db")
+CHROMA_PERSISTENT_DIR = os.getenv("CHROMA_PERSISTENT_DIR")
 _client: Optional[chromadb.Client] = None
 
 
