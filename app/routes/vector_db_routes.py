@@ -44,10 +44,13 @@ def search_vector_repo(req: VectorSearchRequest):
     """
     try:
         return vector_search_service(
-        repo_name=req.repo_name,
+        owner=req.owner,
+        repo =req.repo,
         query=req.query,
-        embedding_provider=req.embedding_provider,
-        top_k=req.top_k,
+        current_file_path= req.current_file_path,
+        embedding_provider= req.embedding_provider,
+        top_k= req.top_k,
+        window_size= 2,
     )
 
     except ValueError as e:

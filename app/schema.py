@@ -117,7 +117,7 @@ class VectorRepoInitRequest(BaseModel):
 # NOTE: prefer passing owner + repo (not "owner/repo") so services can normalize cleanly.
 class VectorSearchRequest(BaseModel):
     owner: str
-    repo_name: str
+    repo: str
     query: str
     top_k: conint(ge=1) = 5
     embedding_provider: str
