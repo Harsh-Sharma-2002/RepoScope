@@ -63,6 +63,15 @@ def search_vector_repo(req: VectorSearchRequest):
 
 @router.get("/status")
 def vector_status(owner: str, repo: str):
-    return get_vector_status(owner, repo)
+    status = get_vector_status(owner, repo)
+
+    if status["indexed_vectors"] == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="Vector index not found. Please run indexing first."
+        )
+
+    return status
+
 
 

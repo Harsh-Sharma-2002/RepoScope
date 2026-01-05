@@ -119,18 +119,44 @@ def delete_collection_if_exists(repo_id: str):
 #################################################################################################################
 #################################################################################################################
 
-CHROMA_PERSISTENT_DIR = os.getenv("CHROMA_PERSISTENT_DIR")
 _client: Optional[chromadb.Client] = None
 
 
+_client: Optional[chromadb.Client] = None
+_chroma_dir: Optional[str] = None
+
+import chromadb
+import os
+from typing import Optional
+
+_client: Optional[chromadb.Client] = None
+
 def get_client() -> chromadb.Client:
     global _client
+
     if _client is None:
-        _client = chromadb.Client(
-            Settings(persist_directory=CHROMA_PERSISTENT_DIR)
+        chroma_dir = os.getenv("CHROMA_PERSISTENT_DIR")
+
+        if not chroma_dir:
+            raise RuntimeError(
+                "CHROMA_PERSISTENT_DIR is not set"
+            )
+
+        os.makedirs(chroma_dir, exist_ok=True)
+
+        _client = chromadb.PersistentClient(
+            path=chroma_dir
         )
+
+        print("✅ CHROMA PERSISTENT CLIENT INITIALIZED")
+        print("📂 PATH:", chroma_dir)
+        print("📁 CONTENTS:", os.listdir(chroma_dir))
+
     return _client
 
+
+
+####
 #################################################################################################################
 #################################################################################################################
 
@@ -411,6 +437,7 @@ def get_vector_status(owner: str, repo: str) -> dict:
         collection = get_existing_collection(repo_id)
         count = collection.count()
     except Exception:
+        # Collection truly does not exist → treat as 0
         count = 0
 
     return {
