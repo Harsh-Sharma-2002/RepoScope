@@ -199,25 +199,24 @@ def vector_index_service(
 # -------------------------------------------------------------------
 # SERVICE 2: Search
 # -------------------------------------------------------------------
-
-def vector_search_service(owner: str, repo: str,query: str, current_file_path: str, embedding_provider: str, top_k: int, window_size: int) -> VectorSearchResponse:
+def vector_search_service(
+    owner: str,
+    repo: str,
+    query: str,
+    current_file_path: str,
+    embedding_provider: str,
+    top_k: int,
+    window_size: int,
+) -> VectorSearchResponse:
     """
     Phase-1 vector search with expanded context windows.
-
-    Behavior:
-    - If query is non-empty → embed query
-    - Else → embed full current file
-    - Retrieve external anchor chunks
-    - Expand file-local context windows
     """
 
-
-    # Resolve repo + collection
+    # Resolve repo id + collection (READ-ONLY)
     repo_id = normalize_repo_id(owner, repo)
     collection = get_existing_collection(repo_id)
 
     # Load repo + chunks (Phase-1 correctness)
-   
     repo_index = index_repo_clone(owner, repo, branch="main")
     repo_chunks: RepoChunksResponse = chunk_repo_contents(repo_index)
 
@@ -228,20 +227,15 @@ def vector_search_service(owner: str, repo: str,query: str, current_file_path: s
     if query and query.strip():
         query_text = query
     else:
-        # Use full current file as query
-        file_chunks = [
-            c.content
-            for c in repo_chunks.chunks
-            if c.file_path == current_file_path
+        file_chunk_objs = [
+            c for c in repo_chunks.chunks if c.file_path == current_file_path
         ]
 
-        if not file_chunks:
-            raise ValueError(
-                f"No chunks found for file '{current_file_path}'"
-            )
+        if not file_chunk_objs:
+            raise ValueError(f"No chunks found for file '{current_file_path}'")
 
-        file_chunks_sorted = sorted(file_chunks, key=lambda c: c.local_index)
-        query_text = "\n".join(file_chunks_sorted)
+        file_chunk_objs_sorted = sorted(file_chunk_objs, key=lambda c: c.local_index)
+        query_text = "\n".join(c.content for c in file_chunk_objs_sorted)
 
     # Embed query
     emb = embed_text(query_text, provider=embedding_provider)
@@ -260,13 +254,16 @@ def vector_search_service(owner: str, repo: str,query: str, current_file_path: s
     # Build lookup for window expansion
     chunk_lookup = build_chunk_lookup(repo_chunks)
 
-  
     # Expand windows + build response
-   
     results: list[VectorSearchResult] = []
 
     for meta, dist in zip(metadatas, distances):
         file_path = meta["file_path"]
+
+        # 🚫 FIX 1: Skip same-file matches
+        if file_path == current_file_path:
+            continue
+
         local_index = meta["local_index"]
 
         file_chunks_map = chunk_lookup.get(file_path)
@@ -302,6 +299,105 @@ def vector_search_service(owner: str, repo: str,query: str, current_file_path: s
         )
 
     return VectorSearchResponse(results=results)
+
+# def vector_search_service(
+#     owner: str,
+#     repo: str,
+#     query: str,
+#     current_file_path: str,
+#     embedding_provider: str,
+#     top_k: int,
+#     window_size: int,
+# ) -> VectorSearchResponse:
+#     """
+#     Phase-1 vector search with expanded context windows.
+#     """
+
+#     # Resolve repo id + collection
+#     repo_id = normalize_repo_id(owner, repo)
+#     collection = get_or_create_collection(repo_id)  # or use your get_existing_collection helper
+
+#     # Load repo + chunks (Phase-1 correctness)
+#     repo_index = index_repo_clone(owner, repo, branch="main")
+#     repo_chunks: RepoChunksResponse = chunk_repo_contents(repo_index)
+
+#     if not repo_chunks.chunks:
+#         raise ValueError("Repository produced zero chunks")
+
+#     # Resolve query text
+#     if query and query.strip():
+#         query_text = query
+#     else:
+#         # Keep chunk objects (not just content) so we can sort by local_index
+#         file_chunk_objs = [
+#             c for c in repo_chunks.chunks if c.file_path == current_file_path
+#         ]
+
+#         if not file_chunk_objs:
+#             raise ValueError(f"No chunks found for file '{current_file_path}'")
+
+#         # sort by the chunk's local_index, then join their contents
+#         file_chunk_objs_sorted = sorted(file_chunk_objs, key=lambda c: c.local_index)
+#         query_text = "\n".join(c.content for c in file_chunk_objs_sorted)
+
+#     # Embed query
+#     emb = embed_text(query_text, provider=embedding_provider)
+#     query_vec = normalize_vector(emb["embedding"])
+
+#     # Vector DB search
+#     raw = collection.query(
+#         query_embeddings=[query_vec],
+#         n_results=top_k,
+#         include=["metadatas", "distances"],
+#     )
+
+#     metadatas = raw.get("metadatas", [[]])[0]
+#     distances = raw.get("distances", [[]])[0]
+
+#     # Build lookup for window expansion (map file_path -> {local_index: chunk})
+#     chunk_lookup = build_chunk_lookup(repo_chunks)
+
+#     # Expand windows + build response
+#     results: list[VectorSearchResult] = []
+
+#     for meta, dist in zip(metadatas, distances):
+#         file_path = meta["file_path"]
+#         local_index = meta["local_index"]
+
+#         file_chunks_map = chunk_lookup.get(file_path)
+#         if not file_chunks_map:
+#             continue
+
+#         expanded_chunks = expand_file_window(
+#             file_chunks=file_chunks_map,
+#             center_index=local_index,
+#             window_size=window_size,
+#         )
+
+#         if not expanded_chunks:
+#             continue
+
+#         context_chunks = [
+#             ContextChunk(
+#                 chunk_id=c.chunk_id,
+#                 file_path=c.file_path,
+#                 local_index=c.local_index,
+#                 content=c.content,
+#             )
+#             for c in sorted(expanded_chunks, key=lambda x: x.local_index)
+#         ]
+
+#         results.append(
+#             VectorSearchResult(
+#                 anchor_chunk_id=meta["chunk_id"],
+#                 file_path=file_path,
+#                 score=1.0 - dist,
+#                 context_chunks=context_chunks,
+#             )
+#         )
+
+#     return VectorSearchResponse(results=results)
+
 
 
 # -------------------------------------------------------------------
