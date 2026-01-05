@@ -111,6 +111,7 @@ class VectorRepoInitRequest(BaseModel):
     repo: str
     branch: str = "main"
     embedding_provider: str
+    
 
 
 # Request to search a repository vector index for relevant external context.
