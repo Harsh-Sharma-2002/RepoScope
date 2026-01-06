@@ -147,4 +147,36 @@ class VectorSearchResponse(BaseModel):
 
 
 
+# LLM Schemas (RAG + Review Layer)
+
+
+class LLMRequest(BaseModel):
+    """
+    Generic LLM request.
+    The prompt is fully constructed by the service layer.
+    """
+    prompt: str
+    max_tokens: int = 512
+    temperature: float = 0.2
+
+
+class LLMResponse(BaseModel):
+    """
+    Generic LLM response.
+    """
+    output: str
+
+
+# Memory Control 
+
+class ResetMemoryResponse(BaseModel):
+    """
+    Response for resetting LLM working memory.
+    """
+    status: str
+    message: str
+
+
+
+
     

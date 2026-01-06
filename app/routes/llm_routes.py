@@ -13,30 +13,31 @@ from ..services.llm_explain_services import (
 router = APIRouter(tags=["llm"])
 
 
-@router.post("/explain-context", response_model=ExplainContextResponse)
+@router.post("/explain-context",response_model=ExplainContextResponse,)
 def explain_context(req: ExplainContextRequest):
     """
-    Explain why the retrieved files are relevant to the query
+    Explain why the retrieved code context is relevant to the query
     and the current file.
 
-    This is a pure RAG explanation endpoint.
+    This endpoint:
+    - does NOT perform vector search
+    - does NOT store memory
+    - only explains existing retrieved context
     """
 
     try:
         return explain_context_llama(
             query=req.query,
             current_file_path=req.current_file_path,
-            results=req.results.results,
-            max_files=req.max_files,
-            max_chars_per_file=req.max_chars_per_file,
+            vector_search_response=req.results,
         )
 
     except ValueError as e:
-        # User / input error
+        # user/input error
         raise HTTPException(status_code=400, detail=str(e))
 
     except Exception as e:
-        # True server failure
+        # genuine server error
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -12,5 +12,4 @@ def extract_content(res: VectorSearchResponse) -> list[str]:
 
     return windows
 
-
-
+ 
