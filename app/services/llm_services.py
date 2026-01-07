@@ -505,3 +505,152 @@ def review_file_service(
 
     # 5. Parse output
     return parse_review_file_output(raw_output)
+
+
+##################################################################################
+def build_review_repo_prompt(
+    *,
+    repo_name: str,
+    context_windows: List[str],
+) -> str:
+    """
+    Build a structured prompt for reviewing an entire repository.
+    """
+
+    sections = []
+
+    for i, window in enumerate(context_windows, start=1):
+        sections.append(
+            f"""
+CONTEXT WINDOW {i}:
+{window}
+""".strip()
+        )
+
+    prompt = f"""
+You are a senior software engineer performing a high-level repository review.
+
+REPOSITORY:
+{repo_name}
+
+REVIEW GOALS:
+- Assess overall architecture and design
+- Identify systemic risks or technical debt
+- Highlight maintainability and scalability concerns
+- Point out cross-cutting issues (duplication, coupling, complexity)
+- Suggest high-level improvements
+
+OUTPUT FORMAT (STRICT JSON):
+Return ONLY valid JSON in the following structure:
+
+{{
+  "summary": "<one-paragraph high-level assessment>",
+  "key_risks": [
+    {{
+      "message": "<description of a risk>",
+      "severity": "<low | medium | high>"
+    }}
+  ],
+  "design_observations": [
+    "<architectural or design observation>",
+    "<another observation>"
+  ]
+}}
+
+RULES:
+- Do NOT include explanations outside JSON
+- Do NOT repeat code verbatim
+- Focus on system-level issues, not line-by-line comments
+
+{chr(10).join(sections)}
+""".strip()
+
+    return prompt
+
+
+import json
+
+def parse_review_repo_output(raw_output: str) -> dict:
+    """
+    Parse structured repository review output from the LLM.
+    """
+
+    try:
+        data = json.loads(raw_output)
+    except json.JSONDecodeError:
+        raise ValueError("LLM did not return valid JSON for repository review.")
+
+    if not isinstance(data, dict):
+        raise ValueError("Invalid repository review output format.")
+
+    required_fields = {"summary", "key_risks", "design_observations"}
+    if not required_fields.issubset(data.keys()):
+        raise ValueError("Missing required fields in repository review output.")
+
+    if not isinstance(data["key_risks"], list):
+        raise ValueError("key_risks must be a list.")
+
+    if not isinstance(data["design_observations"], list):
+        raise ValueError("design_observations must be a list.")
+
+    return {
+        "summary": data["summary"],
+        "key_risks": data["key_risks"],
+        "design_observations": data["design_observations"],
+    }
+
+
+def review_repo_service(
+    *,
+    owner: str,
+    repo: str,
+    llm_provider: str,
+    llm_api_key: str,
+) -> dict:
+    """
+    Review an entire repository using retrieved context.
+
+    PIPELINE:
+    1. Define repo-level review intent
+    2. Retrieve representative context via vector search
+    3. Build review prompt
+    4. Dispatch to selected LLM
+    5. Parse structured output
+    """
+
+    # 1. Repo-level intent
+    query = f"Review the overall architecture and design of the repository {repo}."
+
+    # 2. Vector search (broad, representative context)
+    vector_results = vector_search_service(
+        owner=owner,
+        repo=repo,
+        query=query,
+        current_file_path="",   # no single file focus
+        embedding_provider="local",
+        top_k=10,
+        window_size=2,
+    )
+
+    context_windows = extract_content(vector_results)
+
+    if not context_windows:
+        raise ValueError("No relevant repository context found for review.")
+
+    # 3. Build prompt
+    prompt = build_review_repo_prompt(
+        repo_name=f"{owner}/{repo}",
+        context_windows=context_windows,
+    )
+
+    # 4. Run LLM
+    raw_output = run_llm_with_provider(
+        provider=llm_provider,
+        prompt=prompt,
+        api_key=llm_api_key,
+        max_tokens=DEFAULT_MAX_TOKENS,
+        temperature=DEFAULT_TEMPERATURE,
+    )
+
+    # 5. Parse output
+    return parse_review_repo_output(raw_output)

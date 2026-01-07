@@ -208,15 +208,31 @@ class ReviewFileResponse(BaseModel):
     provider: str
 
 
-# -----------------------------------------------------------------------------
 # Memory Control (Phase-2)
-# -----------------------------------------------------------------------------
 
 class ResetMemoryResponse(BaseModel):
     status: str
     message: str
 
+class ReviewRepoRequest(BaseModel):
+    """
+    Request to review an entire repository.
+    """
+    owner: str
+    repo: str
+
+    llm_provider: LLMProvider
+    llm_api_key: str  # REQUIRED (BYOK)
 
 
+class RepoRisk(BaseModel):
+    message: str
+    severity: Optional[str] = None
 
-    
+
+class ReviewRepoResponse(BaseModel):
+    summary: str
+    key_risks: list[RepoRisk]
+    design_observations: list[str]
+    provider: str
+

@@ -4,9 +4,11 @@ from ..schema import (
     ExplainFileRequest,
     ExplainFileResponse,
     ReviewFileRequest,
-    ReviewFileResponse
+    ReviewFileResponse,
+    ReviewRepoRequest,
+    ReviewRepoResponse
 )
-from ..services.llm_services import explain_file_service,review_file_service
+from ..services.llm_services import explain_file_service,review_file_service,review_repo_service
 
 router = APIRouter(tags=["llm"])
 
@@ -96,3 +98,37 @@ def review_file(req: ReviewFileRequest):
         )
 
 
+@router.post("/review-repo", response_model=ReviewRepoResponse)
+def review_repo(req: ReviewRepoRequest):
+    """
+    Review an entire repository at a high level.
+    """
+
+    try:
+        result = review_repo_service(
+            owner=req.owner,
+            repo=req.repo,
+            llm_provider=req.llm_provider,
+            llm_api_key=req.llm_api_key,
+        )
+
+        return ReviewRepoResponse(
+            summary=result["summary"],
+            key_risks=result["key_risks"],
+            design_observations=result["design_observations"],
+            provider=req.llm_provider,
+        )
+
+    except ValueError as e:
+        # User / input / configuration error
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        )
+
+    except Exception:
+        # Genuine server failure
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error while reviewing repository",
+        )
