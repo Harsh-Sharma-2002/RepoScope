@@ -1,12 +1,7 @@
-import os
-import requests
 from typing import List
-
-
 from ..schema import VectorSearchResponse
 from .vector_db_services import vector_search_service
-from .embedding_services import embed_text
-
+import os
 
 """
 LLM Services — Phase 1 (Explain File)
@@ -29,6 +24,7 @@ ARCHITECTURE:
 
 DEFAULT_MAX_TOKENS = 400
 DEFAULT_TEMPERATURE = 0.2
+HF_MODEL = os.getenv("HUGGINGFACE_MODEL", "meta-llama/CodeLlama-7b-Instruct-hf")
 
 
 # =============================================================================
@@ -55,15 +51,10 @@ def extract_content(res: VectorSearchResponse) -> List[str]:
 # Helper 2: Build explain-file prompt
 # =============================================================================
 
-def build_explain_prompt(
-    *,
-    file_path: str,
-    context_windows: List[str],
-) -> str:
+def build_explain_prompt(*, file_path: str, context_windows: List[str]) -> str:
     """
     Build the full prompt for explaining a file in repo context.
     """
-
     sections = []
 
     for i, window in enumerate(context_windows, start=1):
@@ -104,44 +95,79 @@ def run_llama_hf(
     temperature: float,
 ) -> str:
     """
-    CodeLLaMA via Hugging Face Inference API.
+    CodeLLaMA via Hugging Face InferenceClient (BYOK).
+    Uses HF_MODEL global (default or env override).
+    Robustly extracts text from the InferenceClient response.
     """
-    HF_API_URL = os.getenv("HUGGINGFACE_API_URL")
-    if not HF_API_URL:
-        raise RuntimeError("HUGGINGFACE_API_URL is not set")
+    from huggingface_hub import InferenceClient
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    if not api_key or not api_key.strip():
+        raise RuntimeError("Hugging Face token is required")
 
-    payload = {
-        "inputs": prompt,
-        "parameters": {
-            "max_new_tokens": max_tokens,
-            "temperature": temperature,
-            "top_p": 0.95,
-            "return_full_text": False,
-        },
-    }
+    model_name = HF_MODEL or "meta-llama/CodeLlama-7b-Instruct-hf"
+    client = InferenceClient(model=model_name, token=api_key)
 
-    response = requests.post(
-        HF_API_URL,
-        headers=headers,
-        json=payload,
-        timeout=60,
-    )
-    response.raise_for_status()
+    try:
+        # Request a non-streaming text generation
+        resp = client.text_generation(
+            prompt,
+            max_new_tokens=max_tokens,
+            temperature=temperature,
+            top_p=0.95,
+            stream=False,
+        )
+    except StopIteration:
+        raise RuntimeError(
+            "Model returned no output (possible cold start or generation failure). Please retry."
+        )
+    except Exception as e:
+        raise RuntimeError(f"Hugging Face inference error: {e}")
 
-    data = response.json()
+    # Normalize possible response shapes
+    # InferenceClient.text_generation may return:
+    # - a string
+    # - a dict with "generated_text"
+    # - a dict with "generated_texts" or "generated_text" in nested structure
+    # - a list of dicts
+    output_text = None
 
-    if isinstance(data, list) and "generated_text" in data[0]:
-        return data[0]["generated_text"]
+    # direct string
+    if isinstance(resp, str):
+        output_text = resp
 
-    if isinstance(data, dict) and "generated_text" in data:
-        return data["generated_text"]
+    # dict-like
+    elif isinstance(resp, dict):
+        # Common key
+        if "generated_text" in resp and isinstance(resp["generated_text"], str):
+            output_text = resp["generated_text"]
+        # Newer return shapes sometimes put text in 'generated_texts' list
+        elif "generated_texts" in resp and isinstance(resp["generated_texts"], list):
+            # try first element
+            first = resp["generated_texts"][0]
+            if isinstance(first, dict) and "text" in first:
+                output_text = first["text"]
+            elif isinstance(first, str):
+                output_text = first
+        # Some shapes include 'outputs' -> list -> 'generated_text'
+        elif "outputs" in resp and isinstance(resp["outputs"], list):
+            first = resp["outputs"][0]
+            if isinstance(first, dict) and "generated_text" in first:
+                output_text = first["generated_text"]
 
-    return str(data)
+    # list-like
+    elif isinstance(resp, list) and len(resp) > 0:
+        first = resp[0]
+        if isinstance(first, dict) and "generated_text" in first:
+            output_text = first["generated_text"]
+        elif isinstance(first, dict) and "text" in first:
+            output_text = first["text"]
+        elif isinstance(first, str):
+            output_text = first
+
+    if not output_text or not isinstance(output_text, str):
+        raise RuntimeError("Empty or invalid response from Hugging Face model")
+
+    return output_text.strip()
 
 
 def run_openai(
@@ -153,6 +179,7 @@ def run_openai(
 ) -> str:
     """
     OpenAI chat completion runner.
+    Uses the OpenAI python client (expects user to supply api_key).
     """
     from openai import OpenAI
     client = OpenAI(api_key=api_key)
@@ -188,7 +215,16 @@ def run_claude(
         messages=[{"role": "user", "content": prompt}],
     )
 
-    return msg.content[0].text
+    # msg.content may be a complex shape; attempt extraction
+    if hasattr(msg, "content"):
+        # If msg.content is list-like with objects that have 'text'
+        try:
+            return msg.content[0].text
+        except Exception:
+            pass
+
+    # fallback
+    return str(msg)
 
 
 def run_gemini(
@@ -199,7 +235,7 @@ def run_gemini(
     temperature: float,
 ) -> str:
     """
-    Google Gemini runner.
+    Google Gemini runner (google.generativeai).
     """
     import google.generativeai as genai
     genai.configure(api_key=api_key)
@@ -213,7 +249,10 @@ def run_gemini(
         },
     )
 
-    return resp.text
+    # resp may have .text or other shape
+    if hasattr(resp, "text"):
+        return resp.text
+    return str(resp)
 
 
 # =============================================================================
@@ -230,7 +269,12 @@ def run_llm_with_provider(
 ) -> str:
     """
     Dispatch prompt execution to the selected LLM provider.
+    Enforces non-empty API key and routes to the correct runner.
     """
+    if not api_key or not api_key.strip():
+        raise ValueError("API key must not be empty")
+
+    provider = provider.lower().strip()
 
     if provider == "llama":
         return run_llama_hf(
@@ -287,7 +331,6 @@ def explain_file_service(
     3. Build prompt internally
     4. Dispatch to selected LLM provider
     """
-
     # 1. Infer implicit query
     query = f"Explain the role and responsibilities of {file_path} in the repository."
 
@@ -321,3 +364,4 @@ def explain_file_service(
         max_tokens=DEFAULT_MAX_TOKENS,
         temperature=DEFAULT_TEMPERATURE,
     )
+#######################################################################################

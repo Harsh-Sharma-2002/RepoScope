@@ -14,17 +14,17 @@ def explain_file(req: ExplainFileRequest):
     """
     Explain a file in the context of its repository.
 
-    The client provides:
+    Client provides:
     - repo identity
     - file path
-    - explicit LLM provider
-    - API key for that provider
+    - LLM provider
+    - API key for that provider (BYOK)
 
-    The backend:
+    Backend:
     - infers intent
     - performs vector search
     - builds the prompt
-    - calls the selected LLM
+    - dispatches to selected LLM
     """
 
     try:
@@ -45,12 +45,16 @@ def explain_file(req: ExplainFileRequest):
         # User / input / configuration error
         raise HTTPException(
             status_code=400,
-            detail=str(e)
+            detail=str(e),
         )
 
     except Exception as e:
-        # Genuine server failure
+        import traceback
+        traceback.print_exc()   # 👈 prints full stack trace to terminal
+
         raise HTTPException(
             status_code=500,
-            detail=str(e)
+            detail=repr(e),     # 👈 repr instead of str
         )
+
+
