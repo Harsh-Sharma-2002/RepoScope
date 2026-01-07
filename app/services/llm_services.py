@@ -365,3 +365,143 @@ def explain_file_service(
         temperature=DEFAULT_TEMPERATURE,
     )
 #######################################################################################
+
+
+def build_review_file_prompt(
+    *,
+    file_path: str,
+    context_windows: List[str],
+) -> str:
+    """
+    Build a structured prompt for reviewing a file in repository context.
+    """
+
+    sections = []
+
+    for i, window in enumerate(context_windows, start=1):
+        sections.append(
+            f"""
+CONTEXT WINDOW {i}:
+{window}
+""".strip()
+        )
+
+    prompt = f"""
+You are a senior software engineer performing a professional code review.
+
+FILE UNDER REVIEW:
+{file_path}
+
+REVIEW GOALS:
+- Identify bugs, edge cases, and potential failures
+- Point out design or architectural issues
+- Suggest improvements or refactors
+- Comment on readability and maintainability
+- Consider consistency with surrounding repository code
+
+OUTPUT FORMAT (STRICT JSON):
+Return ONLY valid JSON in the following structure:
+
+{{
+  "summary": "<one-paragraph overall assessment>",
+  "comments": [
+    {{
+      "message": "<specific review comment>",
+      "severity": "<low | medium | high>"
+    }}
+  ]
+}}
+
+RULES:
+- Do NOT include explanations outside JSON
+- Do NOT repeat code verbatim
+- If no issues are found, return an empty comments list
+
+{chr(10).join(sections)}
+""".strip()
+
+    return prompt
+
+
+import json
+
+def parse_review_file_output(raw_output: str) -> dict:
+    """
+    Parse structured review output from the LLM.
+    """
+
+    try:
+        data = json.loads(raw_output)
+    except json.JSONDecodeError:
+        raise ValueError("LLM did not return valid JSON for review output.")
+
+    if not isinstance(data, dict):
+        raise ValueError("Invalid review output format.")
+
+    if "summary" not in data or "comments" not in data:
+        raise ValueError("Missing required fields in review output.")
+
+    if not isinstance(data["comments"], list):
+        raise ValueError("Review comments must be a list.")
+
+    return {
+        "summary": data["summary"],
+        "comments": data["comments"],
+    }
+
+
+def review_file_service(
+    *,
+    owner: str,
+    repo: str,
+    file_path: str,
+    llm_provider: str,
+    llm_api_key: str,
+) -> dict:
+    """
+    Review a file in repository context.
+
+    PIPELINE:
+    1. Infer review intent
+    2. Retrieve external context via vector search
+    3. Build review prompt
+    4. Dispatch to selected LLM
+    5. Parse structured output
+    """
+
+    # 1. Review intent
+    query = f"Review {file_path} for bugs, design issues, and improvements."
+
+    # 2. Vector search (external context only)
+    vector_results = vector_search_service(
+        owner=owner,
+        repo=repo,
+        query=query,
+        current_file_path=file_path,
+        embedding_provider="local",
+        top_k=5,
+        window_size=2,
+    )
+
+    context_windows = extract_content(vector_results)
+
+    if not context_windows:
+        raise ValueError("No relevant external context found for review.")
+
+    # 3. Build review prompt
+    prompt = build_review_file_prompt(
+        file_path=file_path,
+        context_windows=context_windows,
+    )
+
+    # 4. Run selected LLM
+    raw_output = run_llm_with_provider(
+        provider=llm_provider,
+        prompt=prompt,
+        api_key=llm_api_key,
+        max_tokens=DEFAULT_MAX_TOKENS,
+        temperature=DEFAULT_TEMPERATURE,
+    )
+
+    # 5. Parse output
+    return parse_review_file_output(raw_output)

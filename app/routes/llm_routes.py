@@ -3,8 +3,10 @@ from fastapi import APIRouter, HTTPException
 from ..schema import (
     ExplainFileRequest,
     ExplainFileResponse,
+    ReviewFileRequest,
+    ReviewFileResponse
 )
-from ..services.llm_services import explain_file_service
+from ..services.llm_services import explain_file_service,review_file_service
 
 router = APIRouter(tags=["llm"])
 
@@ -55,6 +57,42 @@ def explain_file(req: ExplainFileRequest):
         raise HTTPException(
             status_code=500,
             detail=repr(e),     # 👈 repr instead of str
+        )
+    
+
+
+@router.post("/review-file", response_model=ReviewFileResponse)
+def review_file(req: ReviewFileRequest):
+    """
+    Review a file in the context of its repository.
+    """
+
+    try:
+        result = review_file_service(
+            owner=req.owner,
+            repo=req.repo,
+            file_path=req.file_path,
+            llm_provider=req.llm_provider,
+            llm_api_key=req.llm_api_key,
+        )
+
+        return ReviewFileResponse(
+            summary=result["summary"],
+            comments=result["comments"],
+            provider=req.llm_provider,
+        )
+
+    except ValueError as e:
+        # User / input / configuration error
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e),     
         )
 
 
