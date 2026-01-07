@@ -199,7 +199,7 @@ class ReviewFileRequest(BaseModel):
 
 class ReviewComment(BaseModel):
     message: str
-    severity: str | None = None  # "info", "warning", "critical"
+    severity: Optional[str] = None
 
 
 class ReviewFileResponse(BaseModel):

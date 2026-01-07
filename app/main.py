@@ -1,11 +1,12 @@
 from fastapi import FastAPI
 import requests
 from dotenv import load_dotenv
+load_dotenv()
 import os
 import requests
 from app.routes import pr_routes, repo_index_routes, chunk_routes, embedding_routes, vector_db_routes, llm_routes
 
-load_dotenv()
+
 
 
 app = FastAPI()

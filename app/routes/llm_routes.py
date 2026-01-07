@@ -1,52 +1,56 @@
-# app/routes/llm_routes.py
-
 from fastapi import APIRouter, HTTPException
-from ..schema import LLMRequest,LLMResponse
-    
 
-from ..services.llm_explain_services import (
-    explain_context_llama,
-    reset_llm_memory,
+from ..schema import (
+    ExplainFileRequest,
+    ExplainFileResponse,
 )
+from ..services.llm_services import explain_file_service
 
 router = APIRouter(tags=["llm"])
 
 
-@router.post("/run", response_model=LLMResponse)
-def run_llm_route(req: LLMRequest):
+@router.post("/explain-file", response_model=ExplainFileResponse)
+def explain_file(req: ExplainFileRequest):
     """
-    Execute an LLM call with a fully constructed prompt.
+    Explain a file in the context of its repository.
 
-    The prompt is assumed to be built by the service layer.
+    The client provides:
+    - repo identity
+    - file path
+    - explicit LLM provider
+    - API key for that provider
+
+    The backend:
+    - infers intent
+    - performs vector search
+    - builds the prompt
+    - calls the selected LLM
     """
 
     try:
-        output = run_llm(
-            prompt=req.prompt,
-            max_tokens=req.max_tokens,
-            temperature=req.temperature,
+        explanation = explain_file_service(
+            owner=req.owner,
+            repo=req.repo,
+            file_path=req.file_path,
+            llm_provider=req.llm_provider,
+            llm_api_key=req.llm_api_key,
         )
-        return LLMResponse(output=output)
+
+        return ExplainFileResponse(
+            explanation=explanation,
+            provider=req.llm_provider,
+        )
 
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # User / input / configuration error
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-
-
-@router.post("/reset-memory")
-def reset_memory(owner: str, repo: str):
-    """
-    Reset LLM working memory for a repository.
-    Useful when starting a fresh review.
-    """
-
-    reset_llm_memory(owner, repo)
-
-    return {
-        "status": "ok",
-        "message": "LLM working memory cleared"
-    }
+        # Genuine server failure
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )

@@ -2,6 +2,7 @@ import os
 import requests
 from typing import List
 
+
 from ..schema import VectorSearchResponse
 from .vector_db_services import vector_search_service
 from .embedding_services import embed_text
