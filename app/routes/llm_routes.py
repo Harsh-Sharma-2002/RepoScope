@@ -1,10 +1,9 @@
 # app/routes/llm_routes.py
 
 from fastapi import APIRouter, HTTPException
-from ..schema import (
-    ExplainContextRequest,
-    ExplainContextResponse,
-)
+from ..schema import LLMRequest,LLMResponse
+    
+
 from ..services.llm_explain_services import (
     explain_context_llama,
     reset_llm_memory,
@@ -13,31 +12,26 @@ from ..services.llm_explain_services import (
 router = APIRouter(tags=["llm"])
 
 
-@router.post("/explain-context",response_model=ExplainContextResponse,)
-def explain_context(req: ExplainContextRequest):
+@router.post("/run", response_model=LLMResponse)
+def run_llm_route(req: LLMRequest):
     """
-    Explain why the retrieved code context is relevant to the query
-    and the current file.
+    Execute an LLM call with a fully constructed prompt.
 
-    This endpoint:
-    - does NOT perform vector search
-    - does NOT store memory
-    - only explains existing retrieved context
+    The prompt is assumed to be built by the service layer.
     """
 
     try:
-        return explain_context_llama(
-            query=req.query,
-            current_file_path=req.current_file_path,
-            vector_search_response=req.results,
+        output = run_llm(
+            prompt=req.prompt,
+            max_tokens=req.max_tokens,
+            temperature=req.temperature,
         )
+        return LLMResponse(output=output)
 
     except ValueError as e:
-        # user/input error
         raise HTTPException(status_code=400, detail=str(e))
 
     except Exception as e:
-        # genuine server error
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Literal
 from pydantic import BaseModel, conint
 
 
@@ -150,29 +150,69 @@ class VectorSearchResponse(BaseModel):
 # LLM Schemas (RAG + Review Layer)
 
 
-class LLMRequest(BaseModel):
+LLMProvider = Literal["llama", "openai", "claude", "gemini"]
+
+# Explain File (Phase-1)
+class ExplainFileRequest(BaseModel):
     """
-    Generic LLM request.
-    The prompt is fully constructed by the service layer.
+    Request to explain a file in repository context.
+
+    The backend:
+    - infers intent
+    - performs retrieval
+    - builds the prompt
+    - dispatches to the selected LLM provider
+
+    The client MUST explicitly choose a provider and supply its API key.
     """
-    prompt: str
-    max_tokens: int = 512
-    temperature: float = 0.2
+    owner: str
+    repo: str
+    file_path: str
+
+    llm_provider: LLMProvider
+    llm_api_key: str  # REQUIRED for all providers
 
 
-class LLMResponse(BaseModel):
+class ExplainFileResponse(BaseModel):
     """
-    Generic LLM response.
+    LLM-generated explanation of the file.
     """
-    output: str
+    explanation: str
+    provider: str
 
 
-# Memory Control 
+
+# Review File 
+
+
+class ReviewFileRequest(BaseModel):
+    """
+    Request to review a file using repository context.
+    """
+    owner: str
+    repo: str
+    file_path: str
+
+    llm_provider: LLMProvider
+    llm_api_key: str  # REQUIRED
+
+
+class ReviewComment(BaseModel):
+    message: str
+    severity: str | None = None  # "info", "warning", "critical"
+
+
+class ReviewFileResponse(BaseModel):
+    summary: str
+    comments: list[ReviewComment]
+    provider: str
+
+
+# -----------------------------------------------------------------------------
+# Memory Control (Phase-2)
+# -----------------------------------------------------------------------------
 
 class ResetMemoryResponse(BaseModel):
-    """
-    Response for resetting LLM working memory.
-    """
     status: str
     message: str
 

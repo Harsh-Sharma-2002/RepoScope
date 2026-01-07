@@ -3,7 +3,7 @@ import requests
 from dotenv import load_dotenv
 import os
 import requests
-from app.routes import pr_routes, repo_index_routes, chunk_routes, embedding_routes, vector_db_routes
+from app.routes import pr_routes, repo_index_routes, chunk_routes, embedding_routes, vector_db_routes, llm_routes
 
 load_dotenv()
 
@@ -16,6 +16,8 @@ app.include_router(repo_index_routes.router, prefix="/repo_index")
 app.include_router(chunk_routes.router, prefix="/chunk")
 app.include_router(embedding_routes.router,prefix="/embed")
 app.include_router(vector_db_routes.router,prefix="/vector")
+app.include_router(llm_routes.router, prefix="/llm")
+
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
