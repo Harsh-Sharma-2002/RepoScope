@@ -244,11 +244,6 @@ Phase 2 (Planned)
 - Performance optimizations (repo cache)
 
 
-License
--------
-
-MIT
-
 
 Acknowledgements
 ----------------
