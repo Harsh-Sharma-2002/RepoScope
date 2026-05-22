@@ -1,22 +1,33 @@
-from typing import List
+from __future__ import annotations
+
+import json
+import os
+from typing import List, Optional
+
+import requests
+
 from ..schema import VectorSearchResponse
 from .vector_db_services import vector_search_service
-import os
 
 """
-LLM Services — Phase 1 (Explain File)
+LLM Services — Phase 1/2
 
 ARCHITECTURE:
-- Client sends: owner, repo, file_path, llm_provider, llm_api_key
+- Client can choose:
+    - local  -> Ollama (your Qwen model)
+    - openai -> BYOK
+    - claude -> BYOK
+    - gemini -> BYOK
+
 - Service:
-    1. Infers intent from file_path
+    1. Infers intent from file_path / repo
     2. Retrieves external context via vector search
     3. Builds the full prompt internally
     4. Dispatches prompt to selected LLM provider
-- Client never sends prompts or vector data
-- No memory yet (added in review phase)
-"""
 
+- Client never sends prompts or vector data
+- No memory yet (added later)
+"""
 
 # =============================================================================
 # Configuration
@@ -24,6 +35,13 @@ ARCHITECTURE:
 
 DEFAULT_MAX_TOKENS = 400
 DEFAULT_TEMPERATURE = 0.2
+
+# Ollama local model config
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:4b")
+OLLAMA_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "300"))
+
+# Optional BYOK / remote provider model defaults
 HF_MODEL = os.getenv("HUGGINGFACE_MODEL", "meta-llama/CodeLlama-7b-Instruct-hf")
 
 
@@ -39,16 +57,14 @@ def extract_content(res: VectorSearchResponse) -> List[str]:
     windows: List[str] = []
 
     for result in res.results:
-        content = "\n\n".join(
-            chunk.content for chunk in result.context_chunks
-        )
+        content = "\n\n".join(chunk.content for chunk in result.context_chunks)
         windows.append(content)
 
     return windows
 
 
 # =============================================================================
-# Helper 2: Build explain-file prompt
+# Helper 2: Build prompts
 # =============================================================================
 
 def build_explain_prompt(*, file_path: str, context_windows: List[str]) -> str:
@@ -83,290 +99,6 @@ Do NOT repeat code verbatim.
     return prompt
 
 
-# =============================================================================
-# Provider-specific LLM runners
-# =============================================================================
-
-def run_llama_hf(
-    *,
-    prompt: str,
-    api_key: str,
-    max_tokens: int,
-    temperature: float,
-) -> str:
-    """
-    CodeLLaMA via Hugging Face InferenceClient (BYOK).
-    Uses HF_MODEL global (default or env override).
-    Robustly extracts text from the InferenceClient response.
-    """
-    from huggingface_hub import InferenceClient
-
-    if not api_key or not api_key.strip():
-        raise RuntimeError("Hugging Face token is required")
-
-    model_name = HF_MODEL or "meta-llama/CodeLlama-7b-Instruct-hf"
-    client = InferenceClient(model=model_name, token=api_key)
-
-    try:
-        # Request a non-streaming text generation
-        resp = client.text_generation(
-            prompt,
-            max_new_tokens=max_tokens,
-            temperature=temperature,
-            top_p=0.95,
-            stream=False,
-        )
-    except StopIteration:
-        raise RuntimeError(
-            "Model returned no output (possible cold start or generation failure). Please retry."
-        )
-    except Exception as e:
-        raise RuntimeError(f"Hugging Face inference error: {e}")
-
-    # Normalize possible response shapes
-    # InferenceClient.text_generation may return:
-    # - a string
-    # - a dict with "generated_text"
-    # - a dict with "generated_texts" or "generated_text" in nested structure
-    # - a list of dicts
-    output_text = None
-
-    # direct string
-    if isinstance(resp, str):
-        output_text = resp
-
-    # dict-like
-    elif isinstance(resp, dict):
-        # Common key
-        if "generated_text" in resp and isinstance(resp["generated_text"], str):
-            output_text = resp["generated_text"]
-        # Newer return shapes sometimes put text in 'generated_texts' list
-        elif "generated_texts" in resp and isinstance(resp["generated_texts"], list):
-            # try first element
-            first = resp["generated_texts"][0]
-            if isinstance(first, dict) and "text" in first:
-                output_text = first["text"]
-            elif isinstance(first, str):
-                output_text = first
-        # Some shapes include 'outputs' -> list -> 'generated_text'
-        elif "outputs" in resp and isinstance(resp["outputs"], list):
-            first = resp["outputs"][0]
-            if isinstance(first, dict) and "generated_text" in first:
-                output_text = first["generated_text"]
-
-    # list-like
-    elif isinstance(resp, list) and len(resp) > 0:
-        first = resp[0]
-        if isinstance(first, dict) and "generated_text" in first:
-            output_text = first["generated_text"]
-        elif isinstance(first, dict) and "text" in first:
-            output_text = first["text"]
-        elif isinstance(first, str):
-            output_text = first
-
-    if not output_text or not isinstance(output_text, str):
-        raise RuntimeError("Empty or invalid response from Hugging Face model")
-
-    return output_text.strip()
-
-
-def run_openai(
-    *,
-    prompt: str,
-    api_key: str,
-    max_tokens: int,
-    temperature: float,
-) -> str:
-    """
-    OpenAI chat completion runner.
-    Uses the OpenAI python client (expects user to supply api_key).
-    """
-    from openai import OpenAI
-    client = OpenAI(api_key=api_key)
-
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are a senior software engineer."},
-            {"role": "user", "content": prompt},
-        ],
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-
-    return resp.choices[0].message.content
-
-
-def run_claude(
-    *,
-    prompt: str,
-    api_key: str,
-    max_tokens: int,
-) -> str:
-    """
-    Anthropic Claude runner.
-    """
-    import anthropic
-    client = anthropic.Anthropic(api_key=api_key)
-
-    msg = client.messages.create(
-        model="claude-3-5-sonnet-20241022",
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    # msg.content may be a complex shape; attempt extraction
-    if hasattr(msg, "content"):
-        # If msg.content is list-like with objects that have 'text'
-        try:
-            return msg.content[0].text
-        except Exception:
-            pass
-
-    # fallback
-    return str(msg)
-
-
-def run_gemini(
-    *,
-    prompt: str,
-    api_key: str,
-    max_tokens: int,
-    temperature: float,
-) -> str:
-    """
-    Google Gemini runner (google.generativeai).
-    """
-    import google.generativeai as genai
-    genai.configure(api_key=api_key)
-
-    model = genai.GenerativeModel("gemini-1.5-flash")
-    resp = model.generate_content(
-        prompt,
-        generation_config={
-            "max_output_tokens": max_tokens,
-            "temperature": temperature,
-        },
-    )
-
-    # resp may have .text or other shape
-    if hasattr(resp, "text"):
-        return resp.text
-    return str(resp)
-
-
-# =============================================================================
-# Provider dispatcher
-# =============================================================================
-
-def run_llm_with_provider(
-    *,
-    provider: str,
-    prompt: str,
-    api_key: str,
-    max_tokens: int,
-    temperature: float,
-) -> str:
-    """
-    Dispatch prompt execution to the selected LLM provider.
-    Enforces non-empty API key and routes to the correct runner.
-    """
-    if not api_key or not api_key.strip():
-        raise ValueError("API key must not be empty")
-
-    provider = provider.lower().strip()
-
-    if provider == "llama":
-        return run_llama_hf(
-            prompt=prompt,
-            api_key=api_key,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-
-    if provider == "openai":
-        return run_openai(
-            prompt=prompt,
-            api_key=api_key,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-
-    if provider == "claude":
-        return run_claude(
-            prompt=prompt,
-            api_key=api_key,
-            max_tokens=max_tokens,
-        )
-
-    if provider == "gemini":
-        return run_gemini(
-            prompt=prompt,
-            api_key=api_key,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-
-    raise ValueError(f"Unsupported LLM provider '{provider}'")
-
-
-# =============================================================================
-# Service: Explain File
-# =============================================================================
-
-def explain_file_service(
-    *,
-    owner: str,
-    repo: str,
-    file_path: str,
-    llm_provider: str,
-    llm_api_key: str,
-) -> str:
-    """
-    Explain a file in repository context using a selected LLM.
-
-    PIPELINE:
-    1. Infer intent from file_path
-    2. Retrieve external context via vector search
-    3. Build prompt internally
-    4. Dispatch to selected LLM provider
-    """
-    # 1. Infer implicit query
-    query = f"Explain the role and responsibilities of {file_path} in the repository."
-
-    # 2. Vector search (external context only)
-    vector_results = vector_search_service(
-        owner=owner,
-        repo=repo,
-        query=query,
-        current_file_path=file_path,
-        embedding_provider="local",
-        top_k=5,
-        window_size=2,
-    )
-
-    context_windows = extract_content(vector_results)
-
-    if not context_windows:
-        raise ValueError("No relevant external context found.")
-
-    # 3. Build prompt
-    prompt = build_explain_prompt(
-        file_path=file_path,
-        context_windows=context_windows,
-    )
-
-    # 4. Run selected LLM
-    return run_llm_with_provider(
-        provider=llm_provider,
-        prompt=prompt,
-        api_key=llm_api_key,
-        max_tokens=DEFAULT_MAX_TOKENS,
-        temperature=DEFAULT_TEMPERATURE,
-    )
-#######################################################################################
-
-
 def build_review_file_prompt(
     *,
     file_path: str,
@@ -375,7 +107,6 @@ def build_review_file_prompt(
     """
     Build a structured prompt for reviewing a file in repository context.
     """
-
     sections = []
 
     for i, window in enumerate(context_windows, start=1):
@@ -423,91 +154,6 @@ RULES:
     return prompt
 
 
-import json
-
-def parse_review_file_output(raw_output: str) -> dict:
-    """
-    Parse structured review output from the LLM.
-    """
-
-    try:
-        data = json.loads(raw_output)
-    except json.JSONDecodeError:
-        raise ValueError("LLM did not return valid JSON for review output.")
-
-    if not isinstance(data, dict):
-        raise ValueError("Invalid review output format.")
-
-    if "summary" not in data or "comments" not in data:
-        raise ValueError("Missing required fields in review output.")
-
-    if not isinstance(data["comments"], list):
-        raise ValueError("Review comments must be a list.")
-
-    return {
-        "summary": data["summary"],
-        "comments": data["comments"],
-    }
-
-
-def review_file_service(
-    *,
-    owner: str,
-    repo: str,
-    file_path: str,
-    llm_provider: str,
-    llm_api_key: str,
-) -> dict:
-    """
-    Review a file in repository context.
-
-    PIPELINE:
-    1. Infer review intent
-    2. Retrieve external context via vector search
-    3. Build review prompt
-    4. Dispatch to selected LLM
-    5. Parse structured output
-    """
-
-    # 1. Review intent
-    query = f"Review {file_path} for bugs, design issues, and improvements."
-
-    # 2. Vector search (external context only)
-    vector_results = vector_search_service(
-        owner=owner,
-        repo=repo,
-        query=query,
-        current_file_path=file_path,
-        embedding_provider="local",
-        top_k=5,
-        window_size=2,
-    )
-
-    context_windows = extract_content(vector_results)
-
-    if not context_windows:
-        raise ValueError("No relevant external context found for review.")
-
-    # 3. Build review prompt
-    prompt = build_review_file_prompt(
-        file_path=file_path,
-        context_windows=context_windows,
-    )
-
-    # 4. Run selected LLM
-    raw_output = run_llm_with_provider(
-        provider=llm_provider,
-        prompt=prompt,
-        api_key=llm_api_key,
-        max_tokens=DEFAULT_MAX_TOKENS,
-        temperature=DEFAULT_TEMPERATURE,
-    )
-
-    # 5. Parse output
-    return parse_review_file_output(raw_output)
-
-
-##################################################################################
 def build_review_repo_prompt(
     *,
     repo_name: str,
@@ -516,7 +162,6 @@ def build_review_repo_prompt(
     """
     Build a structured prompt for reviewing an entire repository.
     """
-
     sections = []
 
     for i, window in enumerate(context_windows, start=1):
@@ -568,13 +213,312 @@ RULES:
     return prompt
 
 
-import json
+# =============================================================================
+# Ollama local runner
+# =============================================================================
+
+def run_ollama_local(
+    *,
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    json_mode: bool = False,
+) -> str:
+    """
+    Run local inference through Ollama.
+
+    Uses:
+    - POST /api/generate
+    - stream=False
+    - response field from the returned JSON
+
+    For structured outputs:
+    - set format="json"
+    """
+    url = f"{OLLAMA_HOST}/api/generate"
+
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+        },
+    }
+
+    if json_mode:
+        payload["format"] = "json"
+
+    resp = requests.post(url, json=payload, timeout=OLLAMA_TIMEOUT_SECONDS)
+    resp.raise_for_status()
+
+    data = resp.json()
+    text = data.get("response", "")
+
+    if not text or not isinstance(text, str):
+        raise RuntimeError(f"Ollama returned empty or invalid response: {data}")
+
+    return text.strip()
+
+
+# =============================================================================
+# BYOK runners
+# =============================================================================
+
+def run_llama_hf(
+    *,
+    prompt: str,
+    api_key: str,
+    max_tokens: int,
+    temperature: float,
+) -> str:
+    """
+    CodeLLaMA via Hugging Face InferenceClient (BYOK).
+    """
+    from huggingface_hub import InferenceClient
+
+    if not api_key or not api_key.strip():
+        raise RuntimeError("Hugging Face token is required")
+
+    model_name = HF_MODEL or "meta-llama/CodeLlama-7b-Instruct-hf"
+    client = InferenceClient(model=model_name, token=api_key)
+
+    try:
+        resp = client.text_generation(
+            prompt,
+            max_new_tokens=max_tokens,
+            temperature=temperature,
+            top_p=0.95,
+            stream=False,
+        )
+    except StopIteration:
+        raise RuntimeError(
+            "Model returned no output (possible cold start or generation failure). Please retry."
+        )
+    except Exception as e:
+        raise RuntimeError(f"Hugging Face inference error: {e}")
+
+    output_text: Optional[str] = None
+
+    if isinstance(resp, str):
+        output_text = resp
+
+    elif isinstance(resp, dict):
+        if "generated_text" in resp and isinstance(resp["generated_text"], str):
+            output_text = resp["generated_text"]
+        elif "generated_texts" in resp and isinstance(resp["generated_texts"], list):
+            first = resp["generated_texts"][0]
+            if isinstance(first, dict) and "text" in first:
+                output_text = first["text"]
+            elif isinstance(first, str):
+                output_text = first
+        elif "outputs" in resp and isinstance(resp["outputs"], list):
+            first = resp["outputs"][0]
+            if isinstance(first, dict) and "generated_text" in first:
+                output_text = first["generated_text"]
+
+    elif isinstance(resp, list) and len(resp) > 0:
+        first = resp[0]
+        if isinstance(first, dict) and "generated_text" in first:
+            output_text = first["generated_text"]
+        elif isinstance(first, dict) and "text" in first:
+            output_text = first["text"]
+        elif isinstance(first, str):
+            output_text = first
+
+    if not output_text or not isinstance(output_text, str):
+        raise RuntimeError("Empty or invalid response from Hugging Face model")
+
+    return output_text.strip()
+
+
+def run_openai(
+    *,
+    prompt: str,
+    api_key: str,
+    max_tokens: int,
+    temperature: float,
+) -> str:
+    """
+    OpenAI chat completion runner.
+    """
+    from openai import OpenAI
+
+    client = OpenAI(api_key=api_key)
+
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are a senior software engineer."},
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+
+    return resp.choices[0].message.content
+
+
+def run_claude(
+    *,
+    prompt: str,
+    api_key: str,
+    max_tokens: int,
+) -> str:
+    """
+    Anthropic Claude runner.
+    """
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=api_key)
+
+    msg = client.messages.create(
+        model="claude-3-5-sonnet-20241022",
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    if hasattr(msg, "content"):
+        try:
+            return msg.content[0].text
+        except Exception:
+            pass
+
+    return str(msg)
+
+
+def run_gemini(
+    *,
+    prompt: str,
+    api_key: str,
+    max_tokens: int,
+    temperature: float,
+) -> str:
+    """
+    Google Gemini runner (google.generativeai).
+    """
+    import google.generativeai as genai
+
+    genai.configure(api_key=api_key)
+
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    resp = model.generate_content(
+        prompt,
+        generation_config={
+            "max_output_tokens": max_tokens,
+            "temperature": temperature,
+        },
+    )
+
+    if hasattr(resp, "text"):
+        return resp.text
+
+    return str(resp)
+
+
+# =============================================================================
+# Provider dispatcher
+# =============================================================================
+
+def run_llm_with_provider(
+    *,
+    provider: str,
+    prompt: str,
+    api_key: str,
+    max_tokens: int,
+    temperature: float,
+    json_mode: bool = False,
+) -> str:
+    """
+    Dispatch prompt execution to the selected LLM provider.
+
+    Provider mapping:
+    - local  -> Ollama/Qwen
+    - llama  -> Hugging Face BYOK
+    - openai -> OpenAI BYOK
+    - claude -> Anthropic BYOK
+    - gemini -> Google BYOK
+    """
+    provider = provider.lower().strip()
+
+    if provider == "local":
+        return run_ollama_local(
+            prompt=prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            json_mode=json_mode,
+        )
+
+    if not api_key or not api_key.strip():
+        raise ValueError("API key must not be empty")
+
+    if provider == "llama":
+        return run_llama_hf(
+            prompt=prompt,
+            api_key=api_key,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+    if provider == "openai":
+        return run_openai(
+            prompt=prompt,
+            api_key=api_key,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+    if provider == "claude":
+        return run_claude(
+            prompt=prompt,
+            api_key=api_key,
+            max_tokens=max_tokens,
+        )
+
+    if provider == "gemini":
+        return run_gemini(
+            prompt=prompt,
+            api_key=api_key,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+    raise ValueError(f"Unsupported LLM provider '{provider}'")
+
+
+# =============================================================================
+# Parsing helpers
+# =============================================================================
+
+def parse_review_file_output(raw_output: str) -> dict:
+    """
+    Parse structured review output from the LLM.
+    """
+    try:
+        data = json.loads(raw_output)
+    except json.JSONDecodeError:
+        raise ValueError("LLM did not return valid JSON for review output.")
+
+    if not isinstance(data, dict):
+        raise ValueError("Invalid review output format.")
+
+    if "summary" not in data or "comments" not in data:
+        raise ValueError("Missing required fields in review output.")
+
+    if not isinstance(data["comments"], list):
+        raise ValueError("Review comments must be a list.")
+
+    return {
+        "summary": data["summary"],
+        "comments": data["comments"],
+    }
+
 
 def parse_review_repo_output(raw_output: str) -> dict:
     """
     Parse structured repository review output from the LLM.
     """
-
     try:
         data = json.loads(raw_output)
     except json.JSONDecodeError:
@@ -600,6 +544,106 @@ def parse_review_repo_output(raw_output: str) -> dict:
     }
 
 
+# =============================================================================
+# Service: Explain File
+# =============================================================================
+
+def explain_file_service(
+    *,
+    owner: str,
+    repo: str,
+    file_path: str,
+    llm_provider: str,
+    llm_api_key: str,
+) -> str:
+    """
+    Explain a file in repository context using a selected LLM.
+    """
+    query = f"Explain the role and responsibilities of {file_path} in the repository."
+
+    vector_results = vector_search_service(
+        owner=owner,
+        repo=repo,
+        query=query,
+        current_file_path=file_path,
+        embedding_provider="local",
+        top_k=5,
+        window_size=2,
+    )
+
+    context_windows = extract_content(vector_results)
+
+    if not context_windows:
+        raise ValueError("No relevant external context found.")
+
+    prompt = build_explain_prompt(
+        file_path=file_path,
+        context_windows=context_windows,
+    )
+
+    return run_llm_with_provider(
+        provider=llm_provider,
+        prompt=prompt,
+        api_key=llm_api_key,
+        max_tokens=DEFAULT_MAX_TOKENS,
+        temperature=DEFAULT_TEMPERATURE,
+        json_mode=False,
+    )
+
+
+# =============================================================================
+# Service: Review File
+# =============================================================================
+
+def review_file_service(
+    *,
+    owner: str,
+    repo: str,
+    file_path: str,
+    llm_provider: str,
+    llm_api_key: str,
+) -> dict:
+    """
+    Review a file in repository context.
+    """
+    query = f"Review {file_path} for bugs, design issues, and improvements."
+
+    vector_results = vector_search_service(
+        owner=owner,
+        repo=repo,
+        query=query,
+        current_file_path=file_path,
+        embedding_provider="local",
+        top_k=5,
+        window_size=2,
+    )
+
+    context_windows = extract_content(vector_results)
+
+    if not context_windows:
+        raise ValueError("No relevant external context found for review.")
+
+    prompt = build_review_file_prompt(
+        file_path=file_path,
+        context_windows=context_windows,
+    )
+
+    raw_output = run_llm_with_provider(
+        provider=llm_provider,
+        prompt=prompt,
+        api_key=llm_api_key,
+        max_tokens=DEFAULT_MAX_TOKENS,
+        temperature=DEFAULT_TEMPERATURE,
+        json_mode=True,
+    )
+
+    return parse_review_file_output(raw_output)
+
+
+# =============================================================================
+# Service: Review Repo
+# =============================================================================
+
 def review_repo_service(
     *,
     owner: str,
@@ -609,24 +653,14 @@ def review_repo_service(
 ) -> dict:
     """
     Review an entire repository using retrieved context.
-
-    PIPELINE:
-    1. Define repo-level review intent
-    2. Retrieve representative context via vector search
-    3. Build review prompt
-    4. Dispatch to selected LLM
-    5. Parse structured output
     """
-
-    # 1. Repo-level intent
     query = f"Review the overall architecture and design of the repository {repo}."
 
-    # 2. Vector search (broad, representative context)
     vector_results = vector_search_service(
         owner=owner,
         repo=repo,
         query=query,
-        current_file_path="",   # no single file focus
+        current_file_path="",
         embedding_provider="local",
         top_k=10,
         window_size=2,
@@ -637,20 +671,18 @@ def review_repo_service(
     if not context_windows:
         raise ValueError("No relevant repository context found for review.")
 
-    # 3. Build prompt
     prompt = build_review_repo_prompt(
         repo_name=f"{owner}/{repo}",
         context_windows=context_windows,
     )
 
-    # 4. Run LLM
     raw_output = run_llm_with_provider(
         provider=llm_provider,
         prompt=prompt,
         api_key=llm_api_key,
         max_tokens=DEFAULT_MAX_TOKENS,
         temperature=DEFAULT_TEMPERATURE,
+        json_mode=True,
     )
 
-    # 5. Parse output
     return parse_review_repo_output(raw_output)
