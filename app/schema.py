@@ -150,7 +150,7 @@ class VectorSearchResponse(BaseModel):
 # LLM Schemas (RAG + Review Layer)
 
 
-LLMProvider = Literal["llama", "openai", "claude", "gemini"]
+LLMProvider = Literal["local", "openai", "claude", "gemini"]
 
 # Explain File (Phase-1)
 class ExplainFileRequest(BaseModel):

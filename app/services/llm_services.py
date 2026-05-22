@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import List, Optional
+from typing import List
 
 import requests
 
@@ -36,13 +36,9 @@ ARCHITECTURE:
 DEFAULT_MAX_TOKENS = 400
 DEFAULT_TEMPERATURE = 0.2
 
-# Ollama local model config
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:4b")
 OLLAMA_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "300"))
-
-# Optional BYOK / remote provider model defaults
-HF_MODEL = os.getenv("HUGGINGFACE_MODEL", "meta-llama/CodeLlama-7b-Instruct-hf")
 
 
 # =============================================================================
@@ -266,73 +262,6 @@ def run_ollama_local(
 # BYOK runners
 # =============================================================================
 
-def run_llama_hf(
-    *,
-    prompt: str,
-    api_key: str,
-    max_tokens: int,
-    temperature: float,
-) -> str:
-    """
-    CodeLLaMA via Hugging Face InferenceClient (BYOK).
-    """
-    from huggingface_hub import InferenceClient
-
-    if not api_key or not api_key.strip():
-        raise RuntimeError("Hugging Face token is required")
-
-    model_name = HF_MODEL or "meta-llama/CodeLlama-7b-Instruct-hf"
-    client = InferenceClient(model=model_name, token=api_key)
-
-    try:
-        resp = client.text_generation(
-            prompt,
-            max_new_tokens=max_tokens,
-            temperature=temperature,
-            top_p=0.95,
-            stream=False,
-        )
-    except StopIteration:
-        raise RuntimeError(
-            "Model returned no output (possible cold start or generation failure). Please retry."
-        )
-    except Exception as e:
-        raise RuntimeError(f"Hugging Face inference error: {e}")
-
-    output_text: Optional[str] = None
-
-    if isinstance(resp, str):
-        output_text = resp
-
-    elif isinstance(resp, dict):
-        if "generated_text" in resp and isinstance(resp["generated_text"], str):
-            output_text = resp["generated_text"]
-        elif "generated_texts" in resp and isinstance(resp["generated_texts"], list):
-            first = resp["generated_texts"][0]
-            if isinstance(first, dict) and "text" in first:
-                output_text = first["text"]
-            elif isinstance(first, str):
-                output_text = first
-        elif "outputs" in resp and isinstance(resp["outputs"], list):
-            first = resp["outputs"][0]
-            if isinstance(first, dict) and "generated_text" in first:
-                output_text = first["generated_text"]
-
-    elif isinstance(resp, list) and len(resp) > 0:
-        first = resp[0]
-        if isinstance(first, dict) and "generated_text" in first:
-            output_text = first["generated_text"]
-        elif isinstance(first, dict) and "text" in first:
-            output_text = first["text"]
-        elif isinstance(first, str):
-            output_text = first
-
-    if not output_text or not isinstance(output_text, str):
-        raise RuntimeError("Empty or invalid response from Hugging Face model")
-
-    return output_text.strip()
-
-
 def run_openai(
     *,
     prompt: str,
@@ -435,7 +364,6 @@ def run_llm_with_provider(
 
     Provider mapping:
     - local  -> Ollama/Qwen
-    - llama  -> Hugging Face BYOK
     - openai -> OpenAI BYOK
     - claude -> Anthropic BYOK
     - gemini -> Google BYOK
@@ -452,14 +380,6 @@ def run_llm_with_provider(
 
     if not api_key or not api_key.strip():
         raise ValueError("API key must not be empty")
-
-    if provider == "llama":
-        return run_llama_hf(
-            prompt=prompt,
-            api_key=api_key,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
 
     if provider == "openai":
         return run_openai(
