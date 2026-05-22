@@ -220,23 +220,13 @@ def run_ollama_local(
     temperature: float,
     json_mode: bool = False,
 ) -> str:
-    """
-    Run local inference through Ollama.
-
-    Uses:
-    - POST /api/generate
-    - stream=False
-    - response field from the returned JSON
-
-    For structured outputs:
-    - set format="json"
-    """
     url = f"{OLLAMA_HOST}/api/generate"
 
     payload = {
         "model": OLLAMA_MODEL,
         "prompt": prompt,
         "stream": False,
+        "think": False,   # turn thinking off
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,
@@ -250,12 +240,12 @@ def run_ollama_local(
     resp.raise_for_status()
 
     data = resp.json()
-    text = data.get("response", "")
+    text = data.get("response", "").strip()
 
-    if not text or not isinstance(text, str):
+    if not text:
         raise RuntimeError(f"Ollama returned empty or invalid response: {data}")
 
-    return text.strip()
+    return text
 
 
 # =============================================================================
