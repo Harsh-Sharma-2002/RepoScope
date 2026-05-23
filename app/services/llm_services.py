@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import List
 
 import requests
@@ -33,7 +34,7 @@ ARCHITECTURE:
 # Configuration
 # =============================================================================
 
-DEFAULT_MAX_TOKENS = 400
+DEFAULT_MAX_TOKENS = 1000
 DEFAULT_TEMPERATURE = 0.2
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
@@ -182,7 +183,20 @@ REVIEW GOALS:
 - Suggest high-level improvements
 
 OUTPUT FORMAT (STRICT JSON):
-Return ONLY valid JSON in the following structure:
+Return ONLY valid JSON in the following structure.
+
+The JSON object MUST contain these exact top-level keys:
+- summary
+- key_risks
+- design_observations
+
+Important rules:
+- summary must be a non-empty string
+- key_risks must be an array, even if empty
+- design_observations must be an array, even if empty
+- Do not omit any required key
+- Do not wrap the JSON in markdown fences
+- Do not add any extra prose before or after the JSON
 
 {{
   "summary": "<one-paragraph high-level assessment>",
@@ -226,7 +240,7 @@ def run_ollama_local(
         "model": OLLAMA_MODEL,
         "prompt": prompt,
         "stream": False,
-        "think": False,   # turn thinking off
+        "think": False,
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,
@@ -401,12 +415,36 @@ def run_llm_with_provider(
 # Parsing helpers
 # =============================================================================
 
+def _extract_json_object(text: str) -> str:
+    text = text.strip()
+
+    # Remove code fences if present
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+
+    # Try direct parse first
+    try:
+        json.loads(text)
+        return text
+    except json.JSONDecodeError:
+        pass
+
+    # Extract the first JSON object from the text
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        raise ValueError("LLM did not return JSON.")
+
+    return match.group(0)
+
+
 def parse_review_file_output(raw_output: str) -> dict:
     """
     Parse structured review output from the LLM.
     """
     try:
-        data = json.loads(raw_output)
+        cleaned = _extract_json_object(raw_output)
+        data = json.loads(cleaned)
     except json.JSONDecodeError:
         raise ValueError("LLM did not return valid JSON for review output.")
 
@@ -430,27 +468,30 @@ def parse_review_repo_output(raw_output: str) -> dict:
     Parse structured repository review output from the LLM.
     """
     try:
-        data = json.loads(raw_output)
+        cleaned = _extract_json_object(raw_output)
+        data = json.loads(cleaned)
     except json.JSONDecodeError:
         raise ValueError("LLM did not return valid JSON for repository review.")
 
     if not isinstance(data, dict):
         raise ValueError("Invalid repository review output format.")
 
-    required_fields = {"summary", "key_risks", "design_observations"}
-    if not required_fields.issubset(data.keys()):
-        raise ValueError("Missing required fields in repository review output.")
+    summary = data.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        raise ValueError("Missing summary in repository review output.")
 
-    if not isinstance(data["key_risks"], list):
-        raise ValueError("key_risks must be a list.")
+    key_risks = data.get("key_risks", [])
+    design_observations = data.get("design_observations", [])
 
-    if not isinstance(data["design_observations"], list):
-        raise ValueError("design_observations must be a list.")
+    if not isinstance(key_risks, list):
+        key_risks = []
+    if not isinstance(design_observations, list):
+        design_observations = []
 
     return {
-        "summary": data["summary"],
-        "key_risks": data["key_risks"],
-        "design_observations": data["design_observations"],
+        "summary": summary,
+        "key_risks": key_risks,
+        "design_observations": design_observations,
     }
 
 
@@ -572,8 +613,8 @@ def review_repo_service(
         query=query,
         current_file_path="",
         embedding_provider="local",
-        top_k=10,
-        window_size=2,
+        top_k=5,
+        window_size=1,
     )
 
     context_windows = extract_content(vector_results)
@@ -590,7 +631,7 @@ def review_repo_service(
         provider=llm_provider,
         prompt=prompt,
         api_key=llm_api_key,
-        max_tokens=DEFAULT_MAX_TOKENS,
+        max_tokens=800,
         temperature=DEFAULT_TEMPERATURE,
         json_mode=True,
     )
